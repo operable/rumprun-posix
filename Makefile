@@ -4,7 +4,7 @@ HOSTCFLAGS=-O2 -g -Wall -Irumpdyn/include
 RUMPLIBS=-Lrumpdyn/lib -Wl,--no-as-needed -lrumpvfs -lrumpfs_kernfs -lrumpdev -lrumpnet_local -lrumpnet_netinet -lrumpnet_net -lrumpnet -lrump -lrumpuser
 RUMPCLIENT=-Lrumpdyn/lib -lrumpclient
 
-all:		example.so rumprun rumpremote
+all:		ifconfig.so rumprun rumpremote
 
 stub.o:		stub.c
 		${CC} ${NBCFLAGS} -fno-builtin-execve -c $< -o $@
@@ -30,21 +30,25 @@ rump.map:
 			sed -e 's/rsys_aliases(//g' -e 's/);//g' -e 's/\(.*\),\(.*\)/\1@\2/g' | \
 			awk '{gsub("@","\t"); print;}' > $@
 
-example.o:	example.c
-		${CC} ${NBCFLAGS} -c $< -o $@
+ifconfig/ifall.o:	
+		cd ifconfig && make && cd ..
 
-example.so:	example.o emul.o stub.o rump.map rump/lib/libc.a
-		${CC} -Wl,-r -nostdlib example.o rump/lib/libc.a -o tmp1.o
+ifall.o:	ifconfig/ifall.o
+		cp ifconfig/ifall.o $@
+
+ifconfig.so:	ifall.o emul.o stub.o rump.map rump/lib/libc.a
+		${CC} -Wl,-r -nostdlib ifall.o rump/lib/libc.a -o tmp1.o
 		objcopy --redefine-syms=extra.map tmp1.o
 		objcopy --redefine-syms=emul.map tmp1.o
 		objcopy --redefine-syms=rump.map tmp1.o
 		${CC} -Wl,-r -nostdlib tmp1.o emul.o stub.o -o tmp2.o
 		objcopy -w -L '*' tmp2.o
 		objcopy --globalize-symbol=main tmp2.o
-		${CC} tmp2.o -nostdlib -shared -Wl,-soname,example.so -o example.so
+		${CC} tmp2.o -nostdlib -shared -Wl,-soname,example.so -o $@
 
 clean:		
 		rm -f *.o *.so *~ rump.map
+		cd ifconfig && make clean && cd ..
 
 cleanrump:	clean
 		rm -rf obj rump rumpobj rumpsrc rumptools rumpdyn

@@ -24,7 +24,7 @@ die(const char *fmt, ...)
 int
 runprog(int (*dlmain)(int, char **), int argc, char *argv[])
 {
-  return (*dlmain)(argc - 1, argv + 1);
+  return (*dlmain)(argc, argv);
 }
 
 
@@ -44,7 +44,8 @@ main(int argc, char *argv[])
 	dlmain = dlsym(dl, "main");
 	if (! dlmain)
 		die("could not find main() in library");
-	ret = runprog(dlmain, argc - 1, argv + 1);	
+        argv[1] = "ifconfig";
+	ret = runprog(dlmain, argc -1 , argv + 1);	
 	rump_sys_reboot(0, NULL);
 	return ret;
 }
