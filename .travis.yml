@@ -9,4 +9,4 @@ env:
 script:
   - ./buildnb.sh
   - make
-  - ./rumprun example.so
+  - ./rumprun ifconfig.so
