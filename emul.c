@@ -12,10 +12,12 @@
 
 #define _NETBSD_ENOSYS 78
 
+__thread _netbsd_errno = 0;
+
 int *
 __errno(void)
 {
-        return __errno_location();
+        return &_netbsd_errno;
 }
 
 typedef int64_t _netbsd_time_t;
@@ -58,7 +60,7 @@ emul_mmap(void *addr, size_t length, int prot, int nflags, int fd, _netbsd_off_t
         int flags = 0;
 
 	if (fd != -1) {
-		errno = _NETBSD_ENOSYS;
+		_netbsd_errno = _NETBSD_ENOSYS;
 		return MAP_FAILED;
 	}
         if (nflags & _NETBSD_MAP_SHARED) flags |= MAP_SHARED;
