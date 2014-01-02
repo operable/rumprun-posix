@@ -12,7 +12,7 @@
 
 #define _NETBSD_ENOSYS 78
 
-__thread int _netbsd_errno = 0;
+static __thread int _netbsd_errno = 0;
 
 int *
 __errno(void)
