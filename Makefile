@@ -1,4 +1,7 @@
 OBJDIR=	obj-rr
+BINDIR= rr/bin
+LIBDIR=	rr/lib
+DIRS=	${OBJDIR} ${BINDIR} ${LIBDIR}
 
 UNAME := $(shell uname -s)
 ifeq ($(UNAME),Linux)
@@ -55,22 +58,25 @@ NBUTILS+=		usr.bin/ktrace
 CPPFLAGS.umount=	-DSMALL
 
 NBUTILS_BASE= $(notdir ${NBUTILS})
-NBUTILSSO=$(NBUTILS_BASE:%=%.so)
+NBUTILSSO=$(NBUTILS_BASE:%=${LIBDIR}/%.so)
 
-PROGS=rumprun rumpremote
+PROGS=${BINDIR}/rumprun ${BINDIR}/rumpremote
 
-all:		${NBUTILSSO} ${PROGS} halt.so
+all:		${NBUTILSSO} ${NBUTILWRAPPERS} ${PROGS} ${LIBDIR}/halt.so ${LIBDIR}/librumpclient.so rr/rumpremote.bash
+
+rr/rumpremote.bash: rumpremote.bash.in
+	sed 's,XXXPATHXXX,$(PWD)/rr,' $< > $@
 
 rumprun.o:	rumprun.c rumprun_common.c
 		${CC} ${HOSTCFLAGS} -c $< -o $@
 
-rumprun:	rumprun.o
+${BINDIR}/rumprun:	rumprun.o
 		${CC} $< -o $@ ${RUMPLIBS} -lc ${DLFLAG}
 
 rumpremote.o:	rumpremote.c rumprun_common.c
 		${CC} ${HOSTCFLAGS} -c $< -o $@
 
-rumpremote:	rumpremote.o
+${BINDIR}/rumpremote:	rumpremote.o
 		${CC} $< -o $@ ${RUMPCLIENT} -lc ${DLFLAG}
 
 emul.o:		emul.c
@@ -85,8 +91,11 @@ readwrite.o:	readwrite.c
 halt.o:		halt.c
 		${CC} ${NBCFLAGS} -c $< -o $@
 
+${LIBDIR}/librumpclient.so:
+	(cd rumpdyn/lib; tar -cf - librumpclient* ) | (cd ${LIBDIR}; tar -xf - )
+
 # this should be refactored into a script...
-halt.so:	halt.o
+${LIBDIR}/halt.so:	halt.o
 	${CC} -Wl,-r -nostdlib $< rump/lib/libc.a -o ${OBJDIR}/tmp1_halt.o
 	objcopy --redefine-syms=extra.map ${OBJDIR}/tmp1_halt.o
 	objcopy --redefine-syms=rump.map ${OBJDIR}/tmp1_halt.o
@@ -109,14 +118,24 @@ rump.map:
 ${OBJDIR}:
 	mkdir -p ${OBJDIR}
 
+${BINDIR}:
+	mkdir -p ${BINDIR}
+
+${LIBDIR}:
+	mkdir -p ${LIBDIR}
+
 define NBUTIL_templ
 rumpsrc/${1}/${2}.ro:
 	( cd rumpsrc/${1} && \
 	    ${RUMPMAKE} LIBCRT0= BUILDRUMP_CFLAGS="-fPIC -std=gnu99 -D__NetBSD__ ${CPPFLAGS.${2}}" ${2}.ro )
 
+${BINDIR}/${2}:
+	ln rrbin ${BINDIR}/${2}
+	chmod 755 rrbin
+
 NBLIBS.${2}:= $(shell cd rumpsrc/${1} && ${RUMPMAKE} -V '$${LDADD}')
 LIBS.${2}=$${NBLIBS.${2}:-l%=rump/lib/lib%.a} rump/lib/libc.a
-${2}.so: rumpsrc/${1}/${2}.ro emul.o exit.o readwrite.o rump.map $${LIBS.${2}} ${OBJDIR}
+${LIBDIR}/${2}.so: rumpsrc/${1}/${2}.ro emul.o exit.o readwrite.o rump.map $${LIBS.${2}} ${DIRS} ${BINDIR}/${2}
 	${CC} -Wl,-r -nostdlib rumpsrc/${1}/${2}.ro $${LIBS.${2}} -o ${OBJDIR}/tmp1_${2}.o
 	objcopy --redefine-syms=extra.map ${OBJDIR}/tmp1_${2}.o
 	objcopy --redefine-syms=rump.map ${OBJDIR}/tmp1_${2}.o
@@ -128,7 +147,7 @@ ${2}.so: rumpsrc/${1}/${2}.ro emul.o exit.o readwrite.o rump.map $${LIBS.${2}} $
 	objcopy --globalize-symbol=emul_main_wrapper \
 	    --globalize-symbol=_netbsd_environ \
 	    --globalize-symbol=_netbsd_exit ${OBJDIR}/tmp2_${2}.o
-	${CC} ${OBJDIR}/tmp2_${2}.o emul.o  -shared -Wl,-dc -Wl,-soname,${2}.so -nostdlib -o ${2}.so
+	${CC} ${OBJDIR}/tmp2_${2}.o emul.o  -shared -Wl,-dc -Wl,-soname,${2}.so -nostdlib -o ${LIBDIR}/${2}.so
 
 clean_${2}:
 	( [ ! -d rumpsrc/${1} ] || ( cd rumpsrc/${1} && ${RUMPMAKE} cleandir && rm -f ${2}.ro ) )
@@ -137,6 +156,7 @@ $(foreach util,${NBUTILS},$(eval $(call NBUTIL_templ,${util},$(notdir ${util})))
 
 clean: $(foreach util,${NBUTILS_BASE},clean_${util})
 		rm -f *.o *.so *~ rump.map ${PROGS} ${OBJDIR}/*
+		rm -rf rr
 
 cleanrump:	clean
 		rm -rf obj rump rumpobj rumptools rumpdyn rumpdynobj

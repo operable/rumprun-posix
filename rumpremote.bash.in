@@ -1,0 +1,45 @@
+rrCANDO=true
+[ -z "${RUMPREMOTE_LOADED}" ] \
+    || { echo "rumpremote env already loaded!"; rrCANDO=false; }
+[ "${SHELL}" != "${SHELL%bash}" ] \
+    || { echo "environment requires bash"; rrCANDO=false; }
+
+if ${rrCANDO}; then
+	RRPATH=XXXPATHXXX
+	RUMPREMOTE_LOADED=yes
+
+	# clear things like "alias ls=---weird-color-stuffs"
+	# XXX: not restored
+	unalias -a
+
+	# save current values
+	rrPATH="${PATH}"
+	rrPS1="${PS1}"
+	rrLD_LIBRARY_PATH="${LD_LIBRARY_PATH}"
+
+	# replace env variables
+	PS1='rumpremote (${RUMP_SERVER:-NULL})$ '
+	export PS1
+
+	PATH="${RRPATH}/bin:${PATH}"
+	export PATH
+
+	LD_LIBRARY_PATH="${RRPATH}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+	export LD_LIBRARY_PATH
+
+	alias unload_rumpremote='
+		PS1="${rrPS1}"
+		PATH="${rrPATH}"
+		if [ -z "${rrLD_LIBRARY_PATH}" ]; then
+			unset LD_LIBRARY_PATH
+		else
+			LD_LIBRARY_PATH="${rrLD_LIBRARY_PATH}"
+			export LD_LIBRARY_PATH
+		fi
+		unset RUMPREMOTE_LOADED
+		unset rrPS1
+		unset rrPATH
+		unset rrLD_LIBRARY_PATH
+		unalias unload_rumpremote
+	'
+fi
