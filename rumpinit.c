@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <rump/rump_syscalls.h>
+#include <rump/rump.h>
 
 void rumprun_init (void) __attribute__((constructor (101)));
 void rumprun_fini (void) __attribute__((destructor (1000)));

@@ -5,7 +5,6 @@ BINDIR=bin
 DEFUNDEF=-D__NetBSD__ -U__FreeBSD__ -Ulinux -U__linux -U__linux__ -U__gnu_linux__
 NBCFLAGS=-nostdinc -nostdlib -Irump/include -O2 -g -Wall -fPIC  ${DEFUNDEF}
 HOSTCFLAGS=-O2 -g -Wall -Irumpdyn/include
-RUMPLIBS=-Lrumpdyn/lib -Wl,--no-as-needed -lrumpkern_time -lrumpvfs -lrumpfs_kernfs -lrumpdev -lrumpnet_local -lrumpnet_netinet -lrumpnet_netinet6 -lrumpnet_net -lrumpnet -lrump -lrumpuser rumpkern_time
 
 RUMPMAKE:=$(shell echo `pwd`/rumptools/rumpmake)
 
@@ -66,7 +65,7 @@ CPPFLAGS.umount=	-DSMALL
 
 NBUTILS_BASE= $(notdir ${NBUTILS})
 
-all:		${NBUTILS_BASE} halt
+all:		${NBUTILS_BASE} halt librumprun.a rumprun
 
 emul.o:		emul.c
 		${CC} ${HOSTCFLAGS} -c $< -o $@
@@ -89,8 +88,26 @@ nullenv.o:	nullenv.c
 halt.o:		halt.c
 		${CC} ${NBCFLAGS} -c $< -o $@
 
+rumprunfn.o:	rumprunfn.c
+		${CC} ${NBCFLAGS} -c $< -o $@
+
 halt:		halt.o emul.o readwrite.o remoteinit.o exit.o nullenv.o rump.map
 		./mkremote.sh halt halt.o
+
+RUNOBJS1= $(addsuffix .o,${NBUTILS_BASE})
+RUNOBJS= $(addprefix $(OBJDIR)/,${RUNOBJS1})
+
+librumprun.a:	${NBUTILS_BASE} emul.o exit.o rumpinit.o nullenv.o
+		ar cr $@ ${RUNOBJS}
+
+rumprun.o:	rumprun.c
+		${CC} ${HOSTCFLAGS} -c $< -o $@
+
+LIBS=rump/lib/libutil.a rump/lib/libprop.a rump/lib/libm.a rump/lib/libipsec.a 
+OFILES=${OBJDIR}/ifconfig.o ${OBJDIR}/ping.o
+
+rumprun:	rumprun.o rumprunfn.o ${OFILES} ${LIBS}
+		./mkrun.sh $@ rumprunfn.o ${OFILES} ${LIBS}
 
 rump.map:	
 		cat ./rumpsrc/sys/rump/librump/rumpkern/rump_syscalls.c | \
@@ -108,8 +125,12 @@ rumpsrc/${1}/${2}.ro:
 
 NBLIBS.${2}:= $(shell cd rumpsrc/${1} && ${RUMPMAKE} -V '$${LDADD}')
 LIBS.${2}=$${NBLIBS.${2}:-l%=rump/lib/lib%.a}
-${2}:	rumpsrc/${1}/${2}.ro emul.o readwrite.o remoteinit.o nullenv.o exit.o rump.map $${LIBS.${2}} $(filter-out $(wildcard ${OBJDIR}), ${OBJDIR})
+${2}:	rumpsrc/${1}/${2}.ro emul.o readwrite.o rumpinit.o remoteinit.o nullenv.o exit.o rump.map $${LIBS.${2}} $(filter-out $(wildcard ${OBJDIR}), ${OBJDIR})
 	./mkremote.sh ${2} rumpsrc/${1}/${2}.ro $${LIBS.${2}}
+	${CC} -Wl,-r -nostdlib rumpsrc/${1}/${2}.ro -o ${OBJDIR}/${2}.o
+	objcopy -w --localize-symbol='*' ${OBJDIR}/${2}.o
+	objcopy --redefine-sym main=main_${2} ${OBJDIR}/${2}.o
+	objcopy --globalize-symbol=main_${2} ${OBJDIR}/${2}.o
 
 clean_${2}:
 	( [ ! -d rumpsrc/${1} ] || ( cd rumpsrc/${1} && ${RUMPMAKE} cleandir && rm -f ${2}.ro ) )

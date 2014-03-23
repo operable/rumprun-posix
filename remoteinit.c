@@ -37,3 +37,25 @@ rumprun_init()
                 continue;
         rump_sys_close(fd);
 }
+
+/* add the fork emulations here as only applicable when using rumpclient */
+int
+emul__fork(void)
+{
+	return rumpclient_fork();
+}
+
+int
+emul__vfork14(void)
+{
+	return rumpclient_fork();
+}
+
+extern char **environ;
+
+int
+emul_execve(const char *filename, char *const argv[], char *const envp[])
+{
+	return rumpclient_exec(filename, argv, environ);
+}
+

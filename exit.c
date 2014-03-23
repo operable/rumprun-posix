@@ -14,12 +14,10 @@ static int ret = 0;
 int
 main(int argc, char **argv)
 {
-	int jret;
 
 	_netbsd__progname = argv[0];
 
-	if (! (jret = setjmp(buf))) {
-		/* exit has not been called, so stdio may not be flushed etc */
+	if (! setjmp(buf)) {
         	_netbsd_exit(_netbsd_main(argc, argv));
 		/* will call _exit so will not reach here */
 	}
