@@ -10,6 +10,7 @@ script:
   - BUILD_QUIET=-qq ./buildnb.sh
   - make
   - ./tests/test.sh
+  - ./rumprun
 
 notifications:
   irc:
