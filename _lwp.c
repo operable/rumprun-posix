@@ -20,6 +20,20 @@
 
 #include "netbsd_init.h"
 
+/* XXX */
+struct thread;
+void set_sched_hook(void (*)(void *, void *));
+struct thread *init_mainthread(void *);
+void block(struct thread *);
+void wake(struct thread *);
+void schedule(void);
+int is_runnable(struct thread *);
+void set_runnable(struct thread *);
+void clear_runnable(struct thread *);
+struct thread *create_thread(const char *, void *,
+			     void (*)(void *), void *, void *, size_t);
+void exit_thread(void);
+
 #if 0
 #define DPRINTF(x) printf x
 #else
@@ -35,14 +49,16 @@
 struct schedulable {
 	struct tls_tcb scd_tls;
 
-	uint8_t scd_uctxstore[UCTX_SIZE];
-
-	pthread_t scd_thread;
+	struct thread *scd_thread;
 	int scd_lwpid;
 
-	int scd_state;
-
 	char *scd_name;
+
+	void (*scd_start)(void *);
+	void *scd_arg;
+
+	void *scd_stack;
+	size_t scd_stack_size;
 
 	struct lwpctl scd_lwpctl;
 
@@ -52,7 +68,6 @@ static TAILQ_HEAD(, schedulable) scheds = TAILQ_HEAD_INITIALIZER(scheds);
 
 static struct schedulable mainthread = {
 	.scd_lwpid = 1,
-	.scd_state = LSRUN,
 };
 struct tls_tcb *curtcb = &mainthread.scd_tls;
 
@@ -79,13 +94,12 @@ void
 _lwp_rumprun_makecontext(ucontext_t *nbuctx, void (*start)(void *),
     void *arg, void *private, void *stack_base, size_t stack_size)
 {
-	struct schedulable *scd;
-	struct tls_tcb *tcb = private;
+	struct schedulable *scd = private;
 
-	scd = private;
-	scd->scd_thread = tcb->tcb_pthread;
-	rumprun_ucontext(&scd->scd_uctxstore, sizeof(scd->scd_uctxstore),
-	    start, arg, stack_base, stack_size);
+	scd->scd_start = start;
+	scd->scd_arg = arg;
+	scd->scd_stack = stack_base;
+	scd->scd_stack_size = stack_size;
 
 	/* thread uctx -> schedulable mapping this way */
 	*(struct schedulable **)nbuctx = scd;
@@ -110,9 +124,11 @@ _lwp_create(const ucontext_t *ucp, unsigned long flags, lwpid_t *lid)
 	static int nextlid = 2;
 	*lid = nextlid++;
 
-	scd->scd_state = LSRUN;
 	scd->scd_lwpid = *lid;
-	TAILQ_INSERT_TAIL(&scheds, scd, entries);
+	scd->scd_thread = create_thread("lwp", scd,
+	    scd->scd_start, scd->scd_arg, scd->scd_stack, scd->scd_stack_size);
+	if (scd->scd_thread == NULL)
+		return EBUSY; /* ??? */
 
 	return 0;
 }
@@ -127,7 +143,7 @@ _lwp_unpark(lwpid_t lid, const void *hint)
 		return -1;
 	}
 
-	scd->scd_state = LSRUN;
+	wake(scd->scd_thread);
 	return 0;
 }
 
@@ -153,45 +169,34 @@ _lwp_unpark_all(const lwpid_t *targets, size_t ntargets, const void *hint)
 	return rv;
 }
 
-void
-_lwp_rumprun_scheduler_init(void)
-{
-	struct schedulable *scd = &mainthread;
-
-	TAILQ_INSERT_TAIL(&scheds, scd, entries);
-	scd->scd_lwpctl.lc_curcpu = 0;
-}
-
+/*
+ * called by the scheduler when a context switch is made
+ * nb. cookie is null when non-lwp threads are being run
+ */
 static void
-_lwp_rumprun_scheduler(void)
+schedhook(void *prevcookie, void *nextcookie)
 {
 	struct schedulable *prev, *scd;
 
-	TAILQ_FOREACH(scd, &scheds, entries) {
-		if (scd->scd_state == LSRUN)
-			break;
-	}
+	scd = nextcookie;
+	curtcb = nextcookie;
+	prev = prevcookie;
 
-	/* p-p-p-p-p-panic */
-	if (!scd) {
-		printf("nothing to schedule!\n");
-		abort();
-	}
-
-	prev = (struct schedulable *)curtcb;
-	curtcb = &scd->scd_tls;
-	TAILQ_REMOVE(&scheds, scd, entries);
-	TAILQ_INSERT_TAIL(&scheds, scd, entries);
-
-	if (__predict_false(prev->scd_state != LSZOMB))
+	if (prev && prev->scd_lwpctl.lc_curcpu != LWPCTL_CPU_EXITED) {
 		prev->scd_lwpctl.lc_curcpu = LWPCTL_CPU_NONE;
-	scd->scd_lwpctl.lc_curcpu = 0;
-	scd->scd_lwpctl.lc_pctr++;
+	}
+	if (scd) {
+		scd->scd_lwpctl.lc_curcpu = 0;
+		scd->scd_lwpctl.lc_pctr++;
+	}
+}
 
-	swapcontext((ucontext_t *)&prev->scd_uctxstore,
-	    (ucontext_t *)&scd->scd_uctxstore);
+void
+_lwp_rumprun_scheduler_init(void)
+{
 
-	DPRINTF(("running %d\n", scd->scd_lwpid));
+	set_sched_hook(schedhook);
+	mainthread.scd_thread = init_mainthread(&mainthread.scd_tls);
 }
 
 int
@@ -208,8 +213,8 @@ ___lwp_park60(clockid_t clock_id, int flags, const struct timespec *ts,
 	if (unpark)
 		_lwp_unpark(unpark, unparkhint);
 
-	current->scd_state = LSSLEEP;
-	_lwp_rumprun_scheduler();
+	block(current->scd_thread);
+	schedule();
 	return 0;
 }
 
@@ -218,10 +223,8 @@ _lwp_exit(void)
 {
 	struct schedulable *scd = (struct schedulable *)curtcb;
 
-	scd->scd_state = LSZOMB;
-	TAILQ_REMOVE(&scheds, scd, entries);
 	scd->scd_lwpctl.lc_curcpu = LWPCTL_CPU_EXITED;
-	_lwp_rumprun_scheduler();
+	exit_thread();
 }
 
 void
@@ -230,7 +233,7 @@ _lwp_continue(lwpid_t lid)
 	struct schedulable *scd;
 
 	if ((scd = lwpid2scd(lid)) != NULL)
-		scd->scd_state = LSRUN;
+		wake(scd->scd_thread);
 }
 
 void
@@ -239,7 +242,7 @@ _lwp_suspend(lwpid_t lid)
 	struct schedulable *scd;
 
 	if ((scd = lwpid2scd(lid)) != NULL)
-		scd->scd_state = LSSUSPENDED;
+		block(scd->scd_thread);
 }
 
 int
@@ -250,10 +253,7 @@ _lwp_wakeup(lwpid_t lid)
 	if ((scd = lwpid2scd(lid)) == NULL)
 		return ESRCH;
 
-	if (scd->scd_state == LSSLEEP) {
-		scd->scd_state = LSRUN;
-		return 0;
-	}
+	wake(scd->scd_thread);
 	return ENODEV;
 }
 
@@ -297,7 +297,7 @@ void
 _sched_yield(void)
 {
 
-	_lwp_rumprun_scheduler();
+	schedule();
 }
 
 struct tls_tcb *
