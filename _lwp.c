@@ -32,6 +32,7 @@ void set_runnable(struct thread *);
 void clear_runnable(struct thread *);
 struct thread *create_thread(const char *, void *,
 			     void (*)(void *), void *, void *, size_t);
+int abssleep_real(uint64_t);
 void exit_thread(void);
 
 #if 0
@@ -206,18 +207,31 @@ ___lwp_park60(clockid_t clock_id, int flags, const struct timespec *ts,
 	lwpid_t unpark, const void *hint, const void *unparkhint)
 {
 	struct schedulable *current = (struct schedulable *)curtcb;
-
-	if (ts) {
-		printf("timed sleeps not supported\n");
-		abort();
-	}
+	int rv;
 
 	if (unpark)
 		_lwp_unpark(unpark, unparkhint);
 
-	block(current->scd_thread);
-	schedule();
-	return 0;
+	if (ts) {
+		if (clock_id != CLOCK_REALTIME || !(flags & TIMER_ABSTIME)) {
+			printf("only CLOCK_REALTIME + TIMER_ABSTIME work\n");
+			abort();
+		}
+		if (abssleep_real(ts->tv_sec*1000 + ts->tv_nsec/(1000*1000)))
+			rv = ETIMEDOUT;
+		else
+			rv = 0;
+	} else {
+		block(current->scd_thread);
+		schedule();
+		rv = 0;
+	}
+
+	if (rv) {
+		errno = rv;
+		rv = -1;
+	}
+	return rv;
 }
 
 void
