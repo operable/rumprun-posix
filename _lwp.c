@@ -129,6 +129,7 @@ _lwp_create(const ucontext_t *ucp, unsigned long flags, lwpid_t *lid)
 	    scd->scd_start, scd->scd_arg, scd->scd_stack, scd->scd_stack_size);
 	if (scd->scd_thread == NULL)
 		return EBUSY; /* ??? */
+	TAILQ_INSERT_TAIL(&scheds, scd, entries);
 
 	return 0;
 }
@@ -197,6 +198,7 @@ _lwp_rumprun_scheduler_init(void)
 
 	set_sched_hook(schedhook);
 	mainthread.scd_thread = init_mainthread(&mainthread.scd_tls);
+	TAILQ_INSERT_TAIL(&scheds, &mainthread, entries);
 }
 
 int
@@ -224,6 +226,7 @@ _lwp_exit(void)
 	struct schedulable *scd = (struct schedulable *)curtcb;
 
 	scd->scd_lwpctl.lc_curcpu = LWPCTL_CPU_EXITED;
+	TAILQ_REMOVE(&scheds, scd, entries);
 	exit_thread();
 }
 
