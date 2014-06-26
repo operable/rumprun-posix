@@ -217,10 +217,11 @@ ___lwp_park60(clockid_t clock_id, int flags, const struct timespec *ts,
 			printf("only CLOCK_REALTIME + TIMER_ABSTIME work\n");
 			abort();
 		}
-		if (abssleep_real(ts->tv_sec*1000 + ts->tv_nsec/(1000*1000)))
+		if (abssleep_real(ts->tv_sec*1000 + ts->tv_nsec/(1000*1000))) {
 			rv = ETIMEDOUT;
-		else
+		} else {
 			rv = 0;
+		}
 	} else {
 		block(current->scd_thread);
 		schedule();
